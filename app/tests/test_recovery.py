@@ -290,10 +290,92 @@ async def test_notification_concurrency_is_bounded_independently(tmp_path):
 async def test_concurrent_quota_reservations_and_restart_cooldown(tmp_path):
     path, clock = str(tmp_path / "jobs.db"), Clock()
     async with SQLiteRepository(path) as a, SQLiteRepository(path) as b:
-        reservations = await asyncio.gather(
-            *[(a if i % 2 else b).reserve_rate_slot(100, 50, 10, 0) for i in range(100)]
-        )
+        # Race two writers in each round without assuming cross-connection FIFO
+        # fairness for 50 queued transactions per writer within busy_timeout.
+        barrier = asyncio.Barrier(2)
+
+        async def reserve(repo):
+            results = []
+            for _ in range(50):
+                await barrier.wait()
+                results.append(await repo.reserve_rate_slot(100, 50, 10, 0))
+            return results
+
+        async with asyncio.TaskGroup() as tasks:
+            first = tasks.create_task(reserve(a))
+            second = tasks.create_task(reserve(b))
+        reservations = first.result() + second.result()
         assert reservations.count(0) == 50
+        assert sum(delay == pytest.approx(10.001) for delay in reservations) == 50
+        async with a.db.execute("SELECT count(*) FROM rate_admissions") as cursor:
+            assert (await cursor.fetchone())[0] == 50
         workers = pool(a, AI(), Delivery(), clock)
         await workers.limiter.start()
         assert await b.reserve_rate_slot(100, 50, 10, 0) == 15
+    async with SQLiteRepository(path) as restarted:
+        assert await restarted.reserve_rate_slot(100, 50, 10, 0) == 15
+
+
+async def test_single_connection_quota_burst_preserves_all_reservations(tmp_path):
+    # The deployed workers share one repository; retain the 100-task burst here.
+    async with SQLiteRepository(str(tmp_path / "jobs.db")) as repo:
+        async with asyncio.TaskGroup() as tasks:
+            reservations = [
+                tasks.create_task(repo.reserve_rate_slot(100, 50, 10, 0)) for _ in range(100)
+            ]
+        results = [task.result() for task in reservations]
+        assert results.count(0) == 50
+        assert sum(delay == pytest.approx(10.001) for delay in results) == 50
+        async with repo.db.execute("SELECT count(*) FROM rate_admissions") as cursor:
+            assert (await cursor.fetchone())[0] == 50
+
+
+async def test_busy_writer_failure_rolls_back_only_the_waiter(tmp_path):
+    path = str(tmp_path / "jobs.db")
+    async with SQLiteRepository(path) as owner, SQLiteRepository(path) as waiter:
+        async with waiter.db.execute("PRAGMA busy_timeout") as cursor:
+            assert (await cursor.fetchone())[0] == 1000
+        # Holding the transaction until the result arrives guarantees contention;
+        # no sleep, shortened timeout, or assumption about scheduler speed is needed.
+        async with owner.transaction() as db:
+            await db.execute("INSERT INTO rate_admissions VALUES(100)")
+            with pytest.raises(sqlite3.OperationalError) as failure:
+                await waiter.reserve_rate_slot(100, 50, 10, 0)
+            assert failure.value.sqlite_errorcode == sqlite3.SQLITE_BUSY
+            assert not waiter.db.in_transaction
+            assert owner.db.in_transaction
+            async with waiter.db.execute("SELECT count(*) FROM rate_admissions") as cursor:
+                assert (await cursor.fetchone())[0] == 0
+        assert await waiter.reserve_rate_slot(100, 50, 10, 0) == 0
+    async with SQLiteRepository(path) as restarted:
+        async with restarted.db.execute("SELECT count(*) FROM rate_admissions") as cursor:
+            assert (await cursor.fetchone())[0] == 2
+        async with restarted.db.execute("PRAGMA quick_check") as cursor:
+            assert (await cursor.fetchone())[0] == "ok"
+
+
+async def test_cancelled_busy_begin_finishes_cleanup_before_connection_reuse(tmp_path):
+    path = str(tmp_path / "jobs.db")
+    async with SQLiteRepository(path) as owner, SQLiteRepository(path) as waiter:
+        began, loop = asyncio.Event(), asyncio.get_running_loop()
+
+        def trace(sql):
+            if sql == "BEGIN IMMEDIATE":
+                loop.call_soon_threadsafe(began.set)
+
+        await waiter.db.set_trace_callback(trace)
+        async with owner.transaction() as db:
+            await db.execute("INSERT INTO rate_admissions VALUES(100)")
+            task = asyncio.create_task(waiter.reserve_rate_slot(100, 50, 10, 0))
+            try:
+                await asyncio.wait_for(began.wait(), 5)
+            finally:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert not waiter.db.in_transaction
+            assert owner.db.in_transaction
+        await waiter.db.set_trace_callback(None)
+        assert await waiter.reserve_rate_slot(100, 50, 10, 0) == 0
+        async with waiter.db.execute("SELECT count(*) FROM rate_admissions") as cursor:
+            assert (await cursor.fetchone())[0] == 2

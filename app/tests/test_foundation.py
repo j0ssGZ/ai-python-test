@@ -111,6 +111,20 @@ async def test_capacity_and_storage_failure_never_acknowledge_work(tmp_path):
             assert (await c.post("/v1/requests", json={"user_input": "x"})).status_code == 503
 
 
+async def test_real_sqlite_writer_contention_returns_503_without_accepting_work(tmp_path):
+    path = tmp_path / "test.db"
+    async with client_at(path) as (client, app), SQLiteRepository(str(path)) as owner:
+        async with owner.transaction():
+            response = await client.post("/v1/requests", json={"user_input": "blocked"})
+            assert response.status_code == 503
+            assert not app.state.repository.db.in_transaction
+            assert owner.db.in_transaction
+        response = await client.post("/v1/requests", json={"user_input": "after release"})
+        assert response.status_code == 201
+        async with app.state.repository.db.execute("SELECT user_input FROM requests") as cursor:
+            assert [row[0] for row in await cursor.fetchall()] == ["after release"]
+
+
 async def test_cancelled_transaction_rolls_back_and_connection_remains_usable(tmp_path):
     async with SQLiteRepository(str(tmp_path / "test.db")) as repo:
         started = asyncio.Event()
