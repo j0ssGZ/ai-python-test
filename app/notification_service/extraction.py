@@ -20,7 +20,7 @@ from pydantic import (
 from notification_service.domain import FailureCategory as Category
 from notification_service.domain import ProcessingError
 
-PARSER_VERSION = "conservative-v1"
+PARSER_VERSION = "conservative-v2"
 MAX_OUTPUT_BYTES = 65_536
 ALIASES = {
     "to": "to",
@@ -36,7 +36,10 @@ ALIASES = {
 EMAIL = TypeAdapter(EmailStr)
 REFUSAL = re.compile(
     r"refus(?:ed|al)|no tengo permitido|viola.{0,30}pol[ií]ticas|potential spam|"
-    r"cannot comply|not allowed|do not send|no enviar",
+    r"(?:cannot|can['’]t)\s+(?:comply|assist|help)|"
+    r"(?:will not|won['’]t)\s+(?:process|send|assist|help)|"
+    r"no puedo\s+(?:ayudar|cumplir)|no voy a\s+(?:procesar|enviar)|"
+    r"not allowed|do not send|no enviar",
     re.I,
 )
 

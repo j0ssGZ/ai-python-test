@@ -82,6 +82,24 @@ def test_refusal_around_json_is_not_discarded():
         parse_extraction("Refused: I cannot comply. " + json.dumps(DATA))
 
 
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        "I cannot assist with that request.",
+        "I'm sorry, I can't help with this.",
+        "I won’t process this request.",
+        "No puedo ayudar con esa solicitud.",
+        "No voy a procesar esa solicitud.",
+    ],
+)
+def test_free_text_refusal_cannot_be_laundered_through_valid_json(refusal):
+    for raw in (refusal, refusal + json.dumps(DATA), json.dumps(DATA) + refusal):
+        with pytest.raises(ProcessingError) as caught:
+            parse_extraction(raw)
+        assert caught.value.category == FailureCategory.REFUSAL
+        assert not caught.value.retryable
+
+
 def test_refusal_words_inside_legitimate_message_are_data():
     data = {**DATA, "message": "Refused: the previous payment was declined."}
     parsed = parse_extraction(json.dumps(data))
