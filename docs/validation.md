@@ -5,6 +5,10 @@ Raw evidence is retained locally under ignored `docs/evidence/`. These are obser
 results, not synthetic performance targets. Reproduction commands are in
 [testing.md](testing.md).
 
+These are the original measurements. The later [zero-notification investigation](zero-notifications.md)
+records parser-v3/v4 corrections, resolution of case-only false negatives, additional regressions
+and a separate unchanged-k6 rerun. Historical measurements below are preserved.
+
 ## Environment and provenance
 
 - Python 3.12; Docker Engine 29.7.2, Compose 5.5.1, 10 allocated CPUs and

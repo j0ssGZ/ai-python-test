@@ -25,7 +25,9 @@ owns creation, activation and retrieval through a repository protocol. Domain
 records, statuses and failure families do not depend on FastAPI. The extractor
 and sender ports let workers use real HTTP clients or deterministic test doubles.
 `extraction.py` owns the only route from untrusted AI text to a validated candidate;
-its semantic guard may veto a candidate but never supplies replacement content.
+its semantic guard verifies exact source correspondence after optional bounded
+ASCII case restoration of an already complete AI message. It never supplies missing
+content. Case restoration is distinct from syntax repair and durably audited.
 
 One Uvicorn process runs two bounded worker pools. Each integration has its own
 bounded HTTPX client, avoiding delivery starvation by extraction connections.
@@ -61,7 +63,8 @@ schedule, counters and terminal states. Equal creation payloads intentionally ge
 different UUIDs; deduplicating identical text would lose legitimate requests.
 Creation idempotency keys are not implemented.
 
-The extraction result, prompt/parser version and repair flag are committed before
+The extraction result, prompt/parser version, syntax-repair and case-restoration
+flags are committed before
 the notification stage. Delivery retries and restarts reuse that exact result.
 They never rerun extraction or combine fields from different AI responses.
 
@@ -70,8 +73,9 @@ They never rerun extraction or combine fields from different AI responses.
 SQLite uses WAL, `synchronous=FULL`, a one-second busy timeout, and local durable
 storage. A connection lock serializes complete transactions. `BEGIN IMMEDIATE`
 also arbitrates independent connections. No transaction includes HTTP, backoff,
-rate-limit waiting or other long-lived work. Schema version 2 migrates version 1
-in place; newer unknown schema versions fail startup rather than being overwritten.
+rate-limit waiting or other long-lived work. Schema version 3 migrates versions 1
+and 2 in place, adding a separate case-restoration flag without changing retained
+payloads. Newer unknown schemas fail startup rather than being overwritten.
 
 A claim atomically increments the stage-specific attempt counter, records an
 attempt and gives it a random lease token with expiration. Only that token while

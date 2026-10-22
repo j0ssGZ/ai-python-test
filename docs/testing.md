@@ -23,8 +23,9 @@ connections, leases, stale owners, final-attempt exhaustion, actual subprocess
 SIGKILL, worker limits and shutdown. Clocks, jitter and external transports are
 controlled. They do not depend on the real provider's random decisions or timing.
 Parser tests cover noisy/invalid JSON, aliases, refusals, missing fields and
-adversarial outputs; semantic tests verify complete message correspondence and
-never replace the AI candidate. Integration tests traverse both required HTTP
+adversarial outputs; semantic tests verify complete message correspondence, bounded
+ASCII case restoration and rejection of missing/truncated content. Integration
+tests traverse both required HTTP
 endpoints using a deterministic HTTPX transport.
 
 ## Start the real stack

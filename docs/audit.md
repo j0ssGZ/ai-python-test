@@ -5,6 +5,10 @@ original k6, Grafana provisioning, dependency audit and outcome-verification too
 This is an engineering review with reproducible evidence, not an independent
 penetration test or a certification for public production deployment.
 
+The later [zero-notification investigation](zero-notifications.md) adds parser-v4
+case restoration, explicit `que` clause coverage and current test/load evidence.
+Milestone counts and dependency findings below describe the original delivery.
+
 ## Requirements and evaluation boundaries
 
 The original README explicitly requires FastAPI on internal port 5000, `app/main.py`
@@ -69,7 +73,7 @@ transaction cleanup, leases and recovery patterns through read-only inspection.
 | Invalid AI credentials | Infrastructure terminal failure | Operator fixes configuration; no silent retry loop |
 | Truncated/malformed output, missing fields | Extraction failure | Only bounded unequivocal repair; stochastic incomplete output may retry |
 | Duplicate fields/aliases or multiple objects | Extraction failure | Ambiguity is terminal; never merge answers |
-| Valid JSON but changed/truncated message | Semantic terminal failure | No notification; no locally reconstructed text |
+| Valid JSON but changed/truncated message | Semantic terminal failure | Only complete ASCII case differences can be restored; no missing content is reconstructed |
 | Unsupported/ambiguous routing language | Semantic terminal failure | Coverage limitation; add general tested grammar only |
 | Structured or recognized prose refusal | Refusal terminal failure | No further extraction or notification |
 | Notify 429 or 5xx | Delivery attempt failure | Persisted quota/backoff; reuse extraction; possible remote uncertainty |

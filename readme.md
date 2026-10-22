@@ -73,7 +73,9 @@ flowchart LR
   against explicit routing/body information. Unsupported phrasing fails closed;
   this is not a universal natural-language understanding guarantee.
 - Message capitalization, punctuation, numbers, times and content must match.
-  This can reject outputs that are structurally valid but inaccurate.
+  Complete AI bodies differing solely in ASCII letter case can be restored to the
+  explicit source's case, with a separate durable audit flag. No missing content,
+  punctuation or Unicode expansion is repaired this way.
 - Explicit refusals terminate immediately. The application does not repeatedly
   ask until the mock produces a permissive answer.
 - Durable intermediate results mean notification retries never repeat extraction.
@@ -110,14 +112,19 @@ docker compose run --rm load-test
 
 Its seven checks per complete iteration only validate HTTP-level behavior. It
 accepts `failed`, does not wait for terminal completion, and defines no thresholds.
-The original four prompts all suffer message-fidelity defects in this mock. An
-honest result can therefore contain zero sends even with all HTTP checks passing.
+Three original prompts suffer substantive message truncation in this mock. The
+Marta prompt has only a case difference, which is safely restored when the AI has
+provided the complete body. The original zero-send result included that false
+negative; HTTP checks alone could not expose it.
 
 Use the [reproducible testing guide](docs/testing.md) to export k6 metrics, wait for
 all outcomes, reconcile accepted counts and API states, inspect failure families,
 and verify actual successful notifications from an independent corpus. The worker
 comparison script tests multiple configurations without editing the provider or
 k6. Read [measured results](docs/validation.md) and the [engineering audit](docs/audit.md).
+The [zero-notification investigation](docs/zero-notifications.md) separates actual
+mock truncation from case-only policy rejections and documents the subsequent
+Spanish grammar correction, bounded case restoration and benchmark reruns.
 
 ## Configuration and local development
 

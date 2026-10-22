@@ -89,9 +89,11 @@ Real batch measurements and their denominators are reported in [validation.md](v
    unexpected fields.
 6. Use strict Pydantic v2 validation for a single recipient, nonempty complete
    message and email/SMS channel. No default fields or country-code invention.
-7. Verify source correspondence using the conservative evidence grammar. The full
-   message must match, including capitalization and times. This stage can veto the
-   AI candidate; it cannot replace it with a local extraction.
+7. Verify source correspondence using the conservative evidence grammar. A complete
+   equal-length message may have ASCII letter case restored from the explicit
+   source; every other character must already match. Record this separately from
+   syntax repair. Then require exact message, recipient and channel correspondence.
+   This cannot supply absent fields, complete truncation or bypass AI extraction.
 8. Commit the validated result durably, then let a separately rate-limited delivery
    worker send it. Never combine fields across attempts or re-extract on delivery retry.
 
