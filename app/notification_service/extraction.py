@@ -20,7 +20,7 @@ from pydantic import (
 from notification_service.domain import FailureCategory as Category
 from notification_service.domain import ProcessingError
 
-PARSER_VERSION = "conservative-v2"
+PARSER_VERSION = "conservative-v3"
 MAX_OUTPUT_BYTES = 65_536
 ALIASES = {
     "to": "to",
@@ -280,7 +280,7 @@ ROUTING = re.compile(
     r"(?:(?:an?|un|una|por)\s+)?"
     r"(?P<channel>e-?mail|mail|correo(?: electr[oó]nico)?|sms|tel[eé]fono)\s+"
     r"(?:to|a|al|para)\s+(?P<recipient>[^:\n]+?)\s*"
-    r"(?::|\s+(?:saying|diciendo(?: que)?|indicando(?: que)?)\s+)"
+    r"(?::|\s+(?:saying|diciendo(?: que)?|indicando(?: que)?|que)\s+)"
     r"(?P<body>.*)$",
     re.I | re.S,
 )
