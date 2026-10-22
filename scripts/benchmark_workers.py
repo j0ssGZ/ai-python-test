@@ -72,6 +72,8 @@ def main() -> int:
                     "300",
                     "--output",
                     str(output),
+                    "--expectations",
+                    str(args.output_dir / f"{name}-input.json"),
                 ],
                 check=True,
             )

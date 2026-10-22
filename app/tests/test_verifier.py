@@ -16,6 +16,8 @@ def evidence():
         "requests": [
             {
                 "id": "id",
+                "ai_attempts": 1,
+                "notify_attempts": 1,
                 "status": "sent",
                 "user_input": "Send email to test@example.org: ready",
                 "created_at": 1,
@@ -86,8 +88,19 @@ def test_legitimate_failure_is_reported_without_claiming_delivery():
         status="failed", failure_category="refusal", failure_code="ai_refused"
     )
     data["attempts"] = [data["attempts"][0]]
+    data["requests"][0]["notify_attempts"] = 0
     data["attempts"][0].update(outcome="failed", failure_category="refusal")
     report = verifier.assess(data, 1)
     assert report["integrity_passed"]
     assert not report["all_sent"]
     assert report["failure_categories"] == {"refusal": 1}
+
+
+def test_independent_gold_oracle_detects_a_shared_semantic_bug():
+    expected = {
+        "id": {"to": "test@example.org", "message": "different intended text", "type": "email"}
+    }
+    report = verifier.assess(evidence(), 1, expected)
+    assert report["semantically_verified_sent"] == 1
+    assert report["independent_gold_matched_sent"] == 0
+    assert not report["integrity_passed"]

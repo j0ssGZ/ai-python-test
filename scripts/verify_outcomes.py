@@ -68,12 +68,15 @@ def percentiles(values: list[float]) -> dict:
     }
 
 
-def assess(data: dict, expected_count: int) -> dict:
+def assess(data: dict, expected_count: int, expected_by_id: dict | None = None) -> dict:
     rows, attempts = data["requests"], data["attempts"]
     states = Counter(r["status"] for r in rows)
     categories = Counter(r["failure_category"] for r in rows if r["status"] == "failed")
     codes = Counter(r["failure_code"] for r in rows if r["status"] == "failed")
     errors = []
+    gold_matched = 0
+    if expected_by_id is not None and set(expected_by_id) != {r["id"] for r in rows}:
+        errors.append("gold_corpus_ids_mismatch")
     if expected_count <= 0 or len(rows) != expected_count:
         errors.append("accepted_count_mismatch_or_empty_batch")
     if states["queued"] + states["processing"]:
@@ -84,6 +87,11 @@ def assess(data: dict, expected_count: int) -> dict:
     correct_sent = 0
     for row in rows:
         history = by_id.get(row["id"], [])
+        if not any(a["stage"] == "extract" for a in history):
+            errors.append("missing_extraction_attempt")
+        for stage, counter in (("extract", "ai_attempts"), ("notify", "notify_attempts")):
+            if sum(a["stage"] == stage for a in history) != row[counter]:
+                errors.append("attempt_counter_mismatch")
         if row["activated_at"] is None:
             errors.append("unactivated_request")
         if row["status"] == "failed" and not row["failure_category"]:
@@ -95,6 +103,14 @@ def assess(data: dict, expected_count: int) -> dict:
         if any(a["failure_category"] == "refusal" for a in history) and notify:
             errors.append("notification_after_refusal")
         if row["status"] == "sent":
+            if expected_by_id is not None:
+                try:
+                    if json.loads(row["extracted_json"]) == expected_by_id[row["id"]]:
+                        gold_matched += 1
+                    else:
+                        errors.append("gold_payload_mismatch")
+                except (ValueError, TypeError, KeyError):
+                    errors.append("gold_payload_mismatch")
             confirmations = [
                 a
                 for a in notify
@@ -140,6 +156,8 @@ def assess(data: dict, expected_count: int) -> dict:
         ),
         "repaired_extractions": sum(r["repaired"] == 1 for r in rows),
         "semantically_verified_sent": correct_sent,
+        "independent_gold_checked": expected_by_id is not None,
+        "independent_gold_matched_sent": gold_matched if expected_by_id is not None else None,
         "timings": timings,
         "processing_span_seconds": max((r["updated_at"] for r in rows), default=0)
         - min((r["created_at"] for r in rows), default=0),
@@ -154,6 +172,7 @@ def main() -> int:
     parser.add_argument("--since", type=float, required=True)
     parser.add_argument("--until", type=float, default=1e20)
     parser.add_argument("--expected-count", type=int, required=True)
+    parser.add_argument("--expectations", type=Path)
     parser.add_argument("--base-url", default="http://127.0.0.1:5000")
     parser.add_argument("--timeout", type=float, default=1200)
     parser.add_argument("--interval", type=float, default=10)
@@ -174,7 +193,10 @@ def main() -> int:
         ) or time.monotonic() >= deadline:
             break
         time.sleep(args.interval)
-    report = assess(data, args.expected_count)
+    expected = (
+        json.loads(args.expectations.read_text())["expected_by_id"] if args.expectations else None
+    )
+    report = assess(data, args.expected_count, expected)
 
     def check_api(row):
         try:

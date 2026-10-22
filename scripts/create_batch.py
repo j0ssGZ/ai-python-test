@@ -12,6 +12,7 @@ import httpx
 async def run(base_url: str, count: int) -> dict:
     semaphore = asyncio.Semaphore(20)
     latencies = {"create": [], "activate": []}
+    expected_by_id = {}
     async with httpx.AsyncClient(base_url=base_url, timeout=10, trust_env=False) as client:
 
         async def create(index):
@@ -27,6 +28,11 @@ async def run(base_url: str, count: int) -> dict:
                 response.raise_for_status()
                 assert response.status_code == 201
                 request_id = response.json()["id"]
+                expected_by_id[request_id] = {
+                    "to": recipient,
+                    "message": f"order number {index} is ready.",
+                    "type": channel,
+                }
                 start = time.perf_counter()
                 activated = await client.post(f"/v1/requests/{request_id}/process")
                 latencies["activate"].append(time.perf_counter() - start)
@@ -41,6 +47,7 @@ async def run(base_url: str, count: int) -> dict:
             "until": time.time(),
             "accepted": len(ids),
             "ids": ids,
+            "expected_by_id": expected_by_id,
             "http_latency_seconds": latencies,
         }
 
@@ -55,7 +62,15 @@ def main():
         parser.error("count must be between 1 and 1000")
     result = asyncio.run(run(args.base_url, args.count))
     args.output.write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps({k: v for k, v in result.items() if k not in ("ids", "http_latency_seconds")}))
+    print(
+        json.dumps(
+            {
+                k: v
+                for k, v in result.items()
+                if k not in ("ids", "http_latency_seconds", "expected_by_id")
+            }
+        )
+    )
 
 
 if __name__ == "__main__":
