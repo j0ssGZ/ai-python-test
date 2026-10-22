@@ -181,3 +181,13 @@ async def test_commit_failure_rolls_back_creation(tmp_path):
         async with repo.db.execute("SELECT count(*) FROM requests") as cursor:
             assert (await cursor.fetchone())[0] == 0
         assert (await client.get("/health/ready")).status_code == 200
+
+
+async def test_invalid_unicode_input_is_rejected_before_storage(tmp_path):
+    async with client_at(tmp_path / "test.db") as (client, _):
+        response = await client.post(
+            "/v1/requests",
+            content=b'{"user_input":"\\ud800"}',
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 422

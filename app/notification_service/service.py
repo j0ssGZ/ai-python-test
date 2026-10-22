@@ -27,6 +27,10 @@ class RequestService:
     async def create(self, user_input: str) -> RequestRecord:
         if not user_input.strip() or len(user_input) > self.settings.max_input_chars:
             raise InvalidInput
+        try:
+            user_input.encode("utf-8")
+        except UnicodeError as exc:
+            raise InvalidInput from exc
         record = RequestRecord(str(uuid4()), user_input, Status.QUEUED, self.clock())
         await self.repository.create(record, self.settings.backlog_capacity)
         return record
