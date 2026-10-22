@@ -1,15 +1,20 @@
 import sqlite3
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StrictStr
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from notification_service.ai_client import AIClient
 from notification_service.config import Settings
+from notification_service.delivery_client import DeliveryClient
 from notification_service.domain import BacklogFull, InvalidInput, NotFound, Status
+from notification_service.rate_limiter import RateLimiter
 from notification_service.repository import SQLiteRepository
 from notification_service.service import RequestService
+from notification_service.workers import WorkerPool
 
 
 class CreateRequest(BaseModel):
@@ -63,14 +68,52 @@ class BodyLimit:
         await self.app(scope, replay, send)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, *, provider_transport: httpx.AsyncBaseTransport | None = None
+) -> FastAPI:
     settings = settings or Settings.from_env()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        async with SQLiteRepository(settings.database_path) as repository:
+        async with AsyncExitStack() as stack:
+            if settings.workers_enabled and settings.provider_api_key is None:
+                raise RuntimeError(
+                    "AI_NOTIFY_PROVIDER_API_KEY is required when workers are enabled"
+                )
+            repository = await stack.enter_async_context(SQLiteRepository(settings.database_path))
             app.state.repository = repository
             app.state.service = RequestService(repository, settings)
+            app.state.workers = None
+            if settings.workers_enabled:
+                clients = []
+                for count, read in ((settings.ai_workers, 5), (settings.notify_workers, 2)):
+                    clients.append(
+                        await stack.enter_async_context(
+                            httpx.AsyncClient(
+                                transport=provider_transport,
+                                base_url=str(settings.provider_url),
+                                trust_env=False,
+                                follow_redirects=False,
+                                limits=httpx.Limits(
+                                    max_connections=count, max_keepalive_connections=count
+                                ),
+                                timeout=httpx.Timeout(read, connect=1, write=1, pool=1),
+                            )
+                        )
+                    )
+                key = settings.provider_api_key.get_secret_value()
+                limiter = RateLimiter(repository, settings)
+                await limiter.start()
+                workers = WorkerPool(
+                    repository,
+                    AIClient(clients[0], key),
+                    DeliveryClient(clients[1], key),
+                    limiter,
+                    settings,
+                )
+                app.state.workers = workers
+                workers.start()
+                stack.push_async_callback(workers.stop)
             yield
 
     app = FastAPI(title="AI Notification Service", lifespan=lifespan)
@@ -113,6 +156,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health/ready")
     async def ready(request: Request):
         await request.app.state.repository.ping()
+        workers = request.app.state.workers
+        if workers is not None and not workers.healthy:
+            return JSONResponse({"detail": "Workers unavailable"}, 503)
         return {"status": "ready"}
 
     return app

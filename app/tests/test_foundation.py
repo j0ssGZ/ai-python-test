@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 @asynccontextmanager
 async def client_at(path, **kwargs):
+    kwargs.setdefault("workers_enabled", False)
     app = create_app(Settings(database_path=str(path), **kwargs))
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(

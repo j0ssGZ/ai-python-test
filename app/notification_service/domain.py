@@ -52,3 +52,14 @@ class RequestRecord:
     status: Status
     created_at: float
     activated_at: float | None = None
+
+
+@dataclass(frozen=True)
+class WorkItem:
+    id: str
+    user_input: str
+    stage: str
+    attempt: int
+    token: str
+    expires_at: float
+    extracted_json: str | None
