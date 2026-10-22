@@ -41,21 +41,19 @@ class BodyLimit:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        chunks = []
-        size = 0
+        body = bytearray()
         while True:
             message = await receive()
             if message["type"] == "http.disconnect":
                 return
             chunk = message.get("body", b"")
-            size += len(chunk)
-            if size > self.limit:
+            if len(body) + len(chunk) > self.limit:
                 await JSONResponse({"detail": "Request body too large"}, 413)(scope, receive, send)
                 return
-            chunks.append(chunk)
+            body.extend(chunk)
             if not message.get("more_body", False):
                 break
-        body = b"".join(chunks)
+        body = bytes(body)
         consumed = False
 
         async def replay():

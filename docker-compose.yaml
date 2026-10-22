@@ -7,6 +7,17 @@ services:
     network_mode: "service:provider"
     depends_on:
       - provider
+    environment:
+      AI_NOTIFY_PROVIDER_API_KEY: ${AI_NOTIFY_PROVIDER_API_KEY:-test-dev-2026}
+      AI_NOTIFY_AI_WORKERS: ${AI_NOTIFY_AI_WORKERS:-16}
+      AI_NOTIFY_NOTIFY_WORKERS: ${AI_NOTIFY_NOTIFY_WORKERS:-4}
+    volumes:
+      - request-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health/ready')"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
 
   provider:
     build:
@@ -71,3 +82,6 @@ services:
     command: run /scripts/health-check.js
     depends_on:
       - provider
+
+volumes:
+  request-data:
