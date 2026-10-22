@@ -2,7 +2,9 @@
 
 import json
 
+import httpx
 import pytest
+from notification_service.ai_client import AIClient
 from notification_service.domain import FailureCategory, ProcessingError
 from notification_service.extraction import parse_extraction, validate_semantics
 
@@ -93,3 +95,54 @@ def test_supported_aliases_and_formatting_do_not_change_message_text():
         "Manda un correo a case@example.org: Tienes un nuevo mensaje.", result.notification
     )
     assert result.notification.message == "Tienes un nuevo mensaje."
+
+
+async def extract_body(source_body, ai_body):
+    content = json.dumps({"to": "case@example.org", "message": ai_body, "type": "email"})
+    response = {"choices": [{"message": {"role": "assistant", "content": content}}]}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=response)),
+        base_url="http://provider",
+    ) as client:
+        return await AIClient(client, "test-key").extract(
+            "Send email to case@example.org: " + source_body
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Tienes un nuevo mensaje.",
+        "Abc12 is the password.",
+        "Upload Config.json.",
+        "Use US, not us.",
+    ],
+)
+async def test_complete_ai_body_can_restore_only_source_ascii_capitalization(body):
+    result = await extract_body(body, body.lower())
+    assert result.notification.message == body
+    assert result.case_restored
+    assert not result.repaired
+
+
+async def test_exact_candidate_does_not_claim_case_restoration():
+    result = await extract_body("Ready.", "Ready.")
+    assert result.notification.message == "Ready."
+    assert not result.case_restored
+
+
+@pytest.mark.parametrize(
+    "source,ai",
+    [
+        ("Your Order Is Ready.", "your order"),
+        ("No, enviar.", "no enviar."),
+        ("Code Abc12.", "code abc13."),
+        ("Two  Spaces.", "two spaces."),
+        ("straße", "strasse"),
+        ("Éxito.", "éxito."),
+        ("cita a las 10:00", "00"),
+    ],
+)
+async def test_case_restoration_never_completes_or_reinterprets_content(source, ai):
+    with pytest.raises(ProcessingError, match="message_mismatch"):
+        await extract_body(source, ai)

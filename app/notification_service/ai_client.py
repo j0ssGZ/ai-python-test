@@ -4,6 +4,7 @@ from notification_service.domain import FailureCategory, ProcessingError
 from notification_service.extraction import (
     ParsedExtraction,
     parse_extraction,
+    restore_message_case,
     strict_json,
     validate_semantics,
 )
@@ -52,6 +53,6 @@ class AIClient:
             raise ProcessingError(
                 FailureCategory.EXTRACTION, "invalid_ai_envelope", retryable=True
             ) from exc
-        result = parse_extraction(message["content"])
+        result = restore_message_case(user_input, parse_extraction(message["content"]))
         validate_semantics(user_input, result.notification)
         return result

@@ -104,3 +104,11 @@ def test_independent_gold_oracle_detects_a_shared_semantic_bug():
     assert report["semantically_verified_sent"] == 1
     assert report["independent_gold_matched_sent"] == 0
     assert not report["integrity_passed"]
+
+
+def test_case_restoration_is_reported_separately_from_syntax_repair():
+    data = evidence()
+    data["requests"][0]["case_restored"] = 1
+    report = verifier.assess(data, 1)
+    assert report["case_restored_extractions"] == 1
+    assert report["repaired_extractions"] == 0

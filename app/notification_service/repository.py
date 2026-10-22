@@ -68,6 +68,13 @@ PRAGMA user_version=2;
 COMMIT;
 """
 
+MIGRATION_3 = """
+BEGIN IMMEDIATE;
+ALTER TABLE requests ADD COLUMN case_restored INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version=3;
+COMMIT;
+"""
+
 
 class SQLiteRepository:
     def __init__(self, path: str):
@@ -92,12 +99,14 @@ class SQLiteRepository:
             await self.db.execute("PRAGMA foreign_keys=ON")
             async with self.db.execute("PRAGMA user_version") as cursor:
                 version = (await cursor.fetchone())[0]
-            if version > 2:
+            if version > 3:
                 raise RuntimeError("Database schema is newer than this application")
             if version == 0:
                 await self.db.executescript(SCHEMA)
             if version < 2:
                 await self.db.executescript(MIGRATION_2)
+            if version < 3:
+                await self.db.executescript(MIGRATION_3)
         except BaseException:
             await self.db.close()
             self._db = None
@@ -268,7 +277,8 @@ class SQLiteRepository:
                    lease_token=NULL,lease_expires_at=NULL,
                    extracted_json=COALESCE(?,extracted_json),
                    prompt_version=COALESCE(?,prompt_version),parser_version=COALESCE(?,parser_version),
-                   repaired=COALESCE(?,repaired),provider_id=?,failure_category=?,failure_code=?
+                   repaired=COALESCE(?,repaired),case_restored=COALESCE(?,case_restored),
+                   provider_id=?,failure_category=?,failure_code=?
                    WHERE id=? AND stage=? AND status='processing' AND lease_token=?
                    AND lease_expires_at>?""",
                 (
@@ -280,6 +290,7 @@ class SQLiteRepository:
                     PROMPT_VERSION if extraction else None,
                     PARSER_VERSION if extraction else None,
                     int(extraction.repaired) if extraction else None,
+                    int(extraction.case_restored) if extraction else None,
                     provider_id,
                     error.category if error else None,
                     error.code if error else None,

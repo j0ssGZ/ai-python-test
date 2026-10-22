@@ -20,7 +20,7 @@ from pydantic import (
 from notification_service.domain import FailureCategory as Category
 from notification_service.domain import ProcessingError
 
-PARSER_VERSION = "conservative-v3"
+PARSER_VERSION = "conservative-v4"
 MAX_OUTPUT_BYTES = 65_536
 ALIASES = {
     "to": "to",
@@ -81,6 +81,7 @@ class Notification(BaseModel):
 class ParsedExtraction:
     notification: Notification
     repaired: bool
+    case_restored: bool = False
 
 
 def invalid(code: str, *, retryable: bool = True) -> ProcessingError:
@@ -286,6 +287,43 @@ ROUTING = re.compile(
 )
 
 
+def source_body(match: re.Match) -> str:
+    body = match["body"].strip()
+    if len(body) >= 2 and body[0] == body[-1] and body[0] in "\"'":
+        body = body[1:-1]
+    return body
+
+
+def restore_message_case(source: str, parsed: ParsedExtraction) -> ParsedExtraction:
+    """Restore source ASCII case only after the AI supplies the entire corresponding body.
+
+    Length, positions, punctuation, numbers, whitespace and non-ASCII characters
+    must already match. This cannot fill missing content or make a truncated
+    response complete. Strict routing/content validation still follows this step.
+    """
+    match = ROUTING.fullmatch(source)
+    if match is None:
+        return parsed
+    body, candidate = source_body(match), parsed.notification.message
+    if body == candidate or len(body) != len(candidate):
+        return parsed
+    for original, extracted in zip(body, candidate, strict=True):
+        if original == extracted:
+            continue
+        if not (
+            original.isascii()
+            and extracted.isascii()
+            and original.isalpha()
+            and extracted.isalpha()
+            and original.lower() == extracted.lower()
+        ):
+            return parsed
+    notification = Notification.model_validate(
+        {**parsed.notification.model_dump(), "message": body}
+    )
+    return ParsedExtraction(notification, parsed.repaired, case_restored=True)
+
+
 def validate_semantics(source: str, notification: Notification) -> None:
     match = ROUTING.fullmatch(source)
     if match is None:
@@ -295,9 +333,7 @@ def validate_semantics(source: str, notification: Notification) -> None:
         recipient = normalize_recipient(match["recipient"], channel)
     except ValueError as exc:
         raise ProcessingError(Category.SEMANTIC, "ambiguous_recipient") from exc
-    body = match["body"].strip()
-    if len(body) >= 2 and body[0] == body[-1] and body[0] in "\"'":
-        body = body[1:-1]
+    body = source_body(match)
     if not body or notification.message != body:
         raise ProcessingError(Category.SEMANTIC, "message_mismatch")
     if channel != notification.type or recipient != notification.to:

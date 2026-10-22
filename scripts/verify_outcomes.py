@@ -155,6 +155,7 @@ def assess(data: dict, expected_count: int, expected_by_id: dict | None = None) 
             Counter(a["failure_category"] for a in attempts if a["failure_category"])
         ),
         "repaired_extractions": sum(r["repaired"] == 1 for r in rows),
+        "case_restored_extractions": sum(r.get("case_restored", 0) == 1 for r in rows),
         "semantically_verified_sent": correct_sent,
         "independent_gold_checked": expected_by_id is not None,
         "independent_gold_matched_sent": gold_matched if expected_by_id is not None else None,

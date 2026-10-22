@@ -231,6 +231,26 @@ async def test_schema_upgrade_keeps_existing_request(tmp_path):
         assert await repo.claim("extract", 100, 30, 3) is None
 
 
+async def test_v2_migration_preserves_existing_extraction_and_initializes_case_flag(tmp_path):
+    from notification_service.repository import MIGRATION_2
+
+    path = str(tmp_path / "v2.db")
+    payload = '{"to":"test@example.org","message":"Ready.","type":"email"}'
+    with sqlite3.connect(path) as db:
+        db.executescript(SCHEMA)
+        db.executescript(MIGRATION_2)
+        db.execute(
+            "INSERT INTO requests(id,user_input,status,created_at,updated_at,extracted_json) "
+            "VALUES('old','original','sent',1,1,?)",
+            (payload,),
+        )
+    async with SQLiteRepository(path) as repo:
+        async with repo.db.execute("SELECT extracted_json,case_restored FROM requests") as cursor:
+            row = await cursor.fetchone()
+        assert row["extracted_json"] == payload
+        assert row["case_restored"] == 0
+
+
 async def test_notification_concurrency_is_bounded_independently(tmp_path):
     clock, entered, release, complete = Clock(), asyncio.Event(), asyncio.Event(), asyncio.Event()
 
