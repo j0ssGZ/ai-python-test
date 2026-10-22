@@ -118,7 +118,15 @@ class SQLiteRepository:
                 yield self.db
                 await self.db.commit()
             except BaseException:
-                await self.db.rollback()
+                # Retain the connection lock until rollback really finishes, even
+                # if shutdown cancels this task again while aiosqlite is working.
+                cleanup = asyncio.create_task(self.db.rollback())
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        continue
+                cleanup.result()
                 raise
 
     @staticmethod
