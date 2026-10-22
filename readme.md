@@ -1,63 +1,144 @@
-﻿# AI Engineer Challenge: Intelligent Notification Service
+# AI Engineer Challenge: Durable Notification Service
 
-## El Reto
-Tu objetivo es implementar un servicio que procese entradas de lenguaje natural, extraiga información estructurada mediante un motor de IA y coordine el envío de notificaciones. La solución debe ser capaz de manejar la incertidumbre de los LLM (ruido en respuestas, formatos inconsistentes) y la latencia del procesamiento cognitivo.
+A Python 3.12 / FastAPI service that accepts natural-language notification requests,
+uses the **required supplied AI endpoint**, validates its output, and sends only
+semantically supported email or SMS notifications.
 
-```mermaid 
-flowchart LR
-    A[User Input] --> B(Your App)
-    B <--> C[AI API]
-    B --> D[Notification Provider]
-    
-    style B fill:#1a2a6c,stroke:#fff,stroke-width:2px,color:#fff
+The supplied mock is intentionally noisy and also has deterministic semantic
+limitations. HTTP success, parseable JSON, and a provider acknowledgment are three
+different observations. The service never reconstructs a truncated message or
+turns an AI refusal into a notification to improve delivery statistics.
+
+## Quick start
+
+```sh
+docker compose up -d --build --wait app influxdb grafana
+curl --fail http://localhost:5000/health/ready
 ```
 
----
+- Application and Swagger: http://localhost:5000/docs
+- Original provider documentation: http://localhost:3001/docs
+- Original Grafana scorecard: http://localhost:3000/d/ia-performance-scorecard/
 
-## Contrato de API
-Para que la suite de validación pueda ejecutar los tests, debes implementar estrictamente los siguientes endpoints en una instancia de **FastAPI** corriendo en el puerto `5000`.
+If port 5000 is occupied, follow the [host-port override](docs/testing.md#start-the-real-stack).
+The tested local override uses port 15000 while preserving internal port 5000 and
+k6's original target. The Compose environment supplies the public challenge key;
+no private API credentials or external model subscription are required.
 
-### Requisitos de estructura
-- **Punto de Entrada:** `app/main.py`
-- **Instancia:** `app = FastAPI()`
-- **Puerto local:** `localhost:5000`
+The app runs as a non-root user. A named volume persists SQLite across container
+recreation. Do not remove that volume if accepted requests or evidence must survive.
+The supplied Grafana authentication and public development key are for local
+assessment, not an Internet-facing deployment.
 
-### 1. Ingesta de Intenciones
-- **POST** `/v1/requests`
-- **Input:** `{"user_input": "Manda un mail a feda@test.com diciendo hola"}`
-- **Output:** `201 Created` con `{"id": "string"}`
+## Original API contracts
 
-### 2. Procesamiento de Envío
-- **POST** `/v1/requests/{id}/process`
-- **Lógica esperada:**
-    1. **Extracción:** Llamar a la IA en `localhost:3001/v1/ai/extract`.
-    2. **Prompting:** Diseñar un `system prompt` para extraer: `{"to": "...", "message": "...", "type": "email|sms"}`.
-    3. **Guardrails:** Implementar lógica para limpiar y validar la respuesta (quitar Markdown, corregir JSON mal formado, etc).
-    4. **Notificación:** Si es válido, enviar a `localhost:3001/v1/notify`.
-- **Output:** `200 OK` o `202 Accepted`
+The entry point remains `app/main.py` and exports `app`.
 
-> **Nota sobre el prompt:** Para garantizar la estabilidad de los tests, el mock utiliza lógica interna para resolver la extracción. Sin embargo, la calidad y robustez de tus instrucciones (prompting) serán factores determinantes en la evaluación humana.
+1. `POST /v1/requests` with `{"user_input":"..."}` returns **201** and `{"id":"..."}`
+   after a durable commit. Registration alone does not start AI processing.
+2. `POST /v1/requests/{id}/process` durably activates work and returns **202**, or
+   **200** for an already terminal request. Repeated activation never resets work.
+3. `GET /v1/requests/{id}` returns **200** and exactly `{"id":"...","status":"..."}`.
+   Public states remain `queued`, `processing`, `sent`, and `failed`.
 
-### 3. Consulta de Estado
-- **GET** `/v1/requests/{id}`
-- **Output:** `200 OK` con `{"id": "string", "status": "queued|processing|sent|failed"}`
+Example input that the mock can represent without changing its message:
 
----
+```json
+{"user_input":"Send email to alex@example.org: your order is ready."}
+```
 
-## Integración con el Provider
-El motor de IA y el servicio de notificaciones están disponibles en `localhost:3001`. Ambos requieren el encabezado de seguridad: `X-API-Key: test-dev-2026`.
+Missing IDs return 404, invalid input 422, excessive bodies 413, and unavailable
+storage or full admission capacity 503. `/health/ready` checks storage and worker
+liveness; it does not guarantee an empty backlog or provider availability.
 
-- **Motor IA:** `/v1/ai/extract` (Esquema estándar de mensajes `system`/`user`).
-- **Notificaciones:** `/v1/notify` (Esquema definido en los docs del provider).
-- **Documentación:** Puedes consultar los Swagger Docs en `http://localhost:3001/docs`.
+## Processing and correctness
 
----
+```mermaid
+flowchart LR
+    Input[Register and activate] --> Queue[(Durable request)]
+    Queue --> AI[AI extraction endpoint]
+    AI --> Validate[Parse and validate meaning]
+    Validate -->|Supported candidate| Result[(Durable extraction)]
+    Validate -->|Invalid or refused| Failed[Categorized failure]
+    Result --> Quota[Bounded delivery and quota]
+    Quota --> Notify[Notification endpoint]
+    Notify --> Confirm[Persist validated confirmation]
+```
 
-## Ejecución y Evaluación
-1. **Levantar infraestructura:** `docker-compose up -d provider influxdb grafana`
-2. **Tu aplicación:** `docker-compose up -d --build app`
-3. **Validación (k6):** `docker-compose run --rm load-test`
-4. **Resultados:** Visualiza el scorecard en tiempo real en [Grafana (localhost:3000)](http://localhost:3000/d/ia-performance-scorecard/)
+- Separate bounded extraction and notification worker pools, with independent
+  HTTP connection limits and attempt budgets.
+- Known aliases, Markdown and unequivocal syntax errors are recoverable. Missing
+  fields, ambiguous JSON and truncated content are never filled in locally.
+- A deliberately conservative evidence grammar verifies the complete AI candidate
+  against explicit routing/body information. Unsupported phrasing fails closed;
+  this is not a universal natural-language understanding guarantee.
+- Message capitalization, punctuation, numbers, times and content must match.
+  This can reject outputs that are structurally valid but inaccurate.
+- Explicit refusals terminate immediately. The application does not repeatedly
+  ask until the mock produces a permissive answer.
+- Durable intermediate results mean notification retries never repeat extraction.
+- Atomic leases, stale-owner fencing, persisted retry schedules and shared provider
+  quota allow bounded recovery after crashes and cancellation.
+- Failure families remain separate: extraction, semantic validation, refusal,
+  infrastructure and notification delivery.
 
----
-*Se valorará la robustez frente a errores inesperados, la calidad del prompting y la arquitectura del pipeline de procesamiento.*
+`sent` means the mock returned a validated delivery acknowledgment and it was
+persisted. It does not prove inbox delivery. Exactly-once external sending cannot
+be guaranteed without provider idempotency/lookup; an ambiguous retry can duplicate
+an external effect. See [architecture and guarantees](docs/architecture.md).
+
+The production-oriented [system prompt](app/notification_service/prompt.py) is
+versioned. The supplied mock ignores it, so mock tests do not prove prompt quality.
+See [semantic scope and known mock defects](docs/semantics.md).
+The [provider analysis](docs/provider-analysis.md) documents its exact stochastic
+distribution, integration contracts and implications for evaluation.
+
+## Tests and evidence
+
+```sh
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r app/requirements-dev.txt
+.venv/bin/pytest -q
+.venv/bin/ruff check app scripts
+```
+
+Run the original load script unchanged:
+
+```sh
+docker compose run --rm load-test
+```
+
+Its seven checks per complete iteration only validate HTTP-level behavior. It
+accepts `failed`, does not wait for terminal completion, and defines no thresholds.
+The original four prompts all suffer message-fidelity defects in this mock. An
+honest result can therefore contain zero sends even with all HTTP checks passing.
+
+Use the [reproducible testing guide](docs/testing.md) to export k6 metrics, wait for
+all outcomes, reconcile accepted counts and API states, inspect failure families,
+and verify actual successful notifications from an independent corpus. The worker
+comparison script tests multiple configurations without editing the provider or
+k6. Read [measured results](docs/validation.md) and the [engineering audit](docs/audit.md).
+
+## Configuration and local development
+
+Settings use `AI_NOTIFY_*` environment variables; the complete validated defaults
+are in [config.py](app/notification_service/config.py). Initial defaults are 16 AI
+workers, 4 notification workers, three attempts per stage, a 30-second lease and
+4.5 notification attempts/s within the provider's 50-per-10-second quota.
+Worker counts are benchmark-supported starting points, not universal optima.
+
+For a host process, with the original provider running on port 3001:
+
+```sh
+export AI_NOTIFY_PROVIDER_API_KEY=test-dev-2026
+.venv/bin/uvicorn main:app --app-dir app --host 127.0.0.1 --port 5000
+```
+
+Direct startup does not automatically read `.env`; Compose uses it for substitution.
+Use `AI_NOTIFY_DATABASE_PATH` to select a separate local database. Do not run another
+worker instance against the same provider during a measurement.
+
+No brokers, agent frameworks, RAG systems or additional infrastructure are used.
+The neighboring backend challenge informed recovery patterns; this project remains
+independent and does not import it. The original `provider/` and `platform/k6/`
+files are preserved byte for byte.
