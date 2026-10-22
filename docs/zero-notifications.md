@@ -186,6 +186,12 @@ after the rebuilt app was healthy. They are outcome checks, not new throughput c
 
 ## Verification and reproduction
 
+**Follow-up:** the focused [SQLite investigation](sqlite-concurrency.md) reproduces
+the lock mechanism, corrects the quota test's cross-connection scheduling
+assumption and adds actual busy/cancellation/HTTP recovery regressions. Its macOS,
+normal Linux filesystem, tmpfs and persistent-volume results supersede the open
+SQLite status below. These paragraphs retain the original unsuccessful evidence.
+
 The targeted regression suite first produced three failures for complete, correct
 `que` clauses. After the one-rule correction, all 141 local tests passed in 2.45 s.
 The first Linux suite, overlapping control work on the shared developer machine,
@@ -316,5 +322,6 @@ recipient/body/type is invented, no truncated content is reconstructed, no refus
 is retried toward a permissive answer, and the required AI endpoint is always used.
 Punctuation changes, Unicode case transformations and unsupported ambiguous
 language remain conservative rejection cases. The separate Linux writable-storage
-contention finding remains documented; it is not hidden by the successful tmpfs
-test run or by the notification outcome improvement.
+contention finding is addressed in the [focused SQLite report](sqlite-concurrency.md),
+including its original failures and residual contention limits; it was not resolved
+by treating the earlier tmpfs run or notification outcome improvement as proof.

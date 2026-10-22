@@ -9,6 +9,31 @@ The later [zero-notification investigation](zero-notifications.md) adds parser-v
 case restoration, explicit `que` clause coverage and current test/load evidence.
 Milestone counts and dependency findings below describe the original delivery.
 
+## SQLite concurrency finding: CLOSED
+
+The [focused SQLite investigation](sqlite-concurrency.md) reproduced the historical
+quota test's BEGIN IMMEDIATE failure. It required cross-connection writer fairness
+within a one-second busy budget while queuing 50 transactions on each connection.
+Under controlled CPU pressure, the original test failed 3/3 on ordinary container
+storage; transaction traces show repeated writer reacquisition, native SQLITE_BUSY,
+correct persisted quota and no leaked transaction. The same mechanism also occurs
+in tmpfs, so moving tests to memory is not the correction.
+
+The fix synchronizes two competing writers in 50 rounds and retains all 100 quota
+decisions, with stronger persistence/deferral assertions. Separate regressions cover
+the deployed single-connection burst, actual busy error propagation, cancellation
+during blocked BEGIN and real HTTP 503/recovery. No production code or SQLite setting
+changed. All 160 tests pass on macOS and Linux overlayfs, tmpfs and a persistent
+Docker volume, plus 50 additional focused passes per configuration (200 total).
+These suites include SIGKILL, persisted retries and worker-concurrency checks.
+
+Closure applies to the reproduced test defect, not a guarantee that every external
+writer obtains SQLite's lock within one second. The exact historical CPU/I/O delay
+was not recorded. Single-process deployment and explicit busy/503 behavior remain
+documented limits; no silent retry or hidden lock error was introduced. Provider
+and original k6 files are unchanged. See the focused report for configurations,
+adverse-schedule comparisons, raw evidence locations and reproduction commands.
+
 ## Requirements and evaluation boundaries
 
 The original README explicitly requires FastAPI on internal port 5000, `app/main.py`

@@ -28,6 +28,29 @@ ASCII case restoration and rejection of missing/truncated content. Integration
 tests traverse both required HTTP
 endpoints using a deterministic HTTPX transport.
 
+## SQLite storage and contention regression
+
+Run the complete suite on macOS and Linux with test databases on the ordinary
+container filesystem **and** a dedicated persistent Docker volume. tmpfs is a
+useful comparison, not the only accepted Linux configuration or a durability proof.
+The [SQLite investigation](sqlite-concurrency.md) records the exact failure stack,
+storage/SQLite versions, controlled reproduction, repetition counts and Docker
+commands. Keep database files outside source bind mounts when comparing storage.
+
+The quota race uses two connections and a barrier for 50 competing rounds, checks
+all 100 outcomes, exact persisted quota and restart cooldown. A separate 100-task
+burst covers the deployed shared repository. Deterministic owner-held transactions
+exercise actual SQLITE_BUSY propagation, cleanup, cancellation of a blocked BEGIN,
+and HTTP 503 without false admission. No busy timeout is shortened/increased for
+these tests, and no lock failure is caught and converted into a passing reservation.
+
+For an incident trace, use `scripts/probe_sqlite_contention.py` against a **new
+scratch directory**, never the application database. It captures transaction
+events, effective PRAGMAs and native error codes, and retains all burst failures.
+Use `--paired` to compare synchronized writers with the unsynchronized burst.
+Resource-limited runs are diagnostics, not throughput measurements or promises
+that arbitrary contention fits within the one-second busy budget.
+
 ## Start the real stack
 
 ```sh
