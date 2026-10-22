@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local service state and generated benchmark evidence
+*.sqlite3*
+*.db-wal
+*.db-shm
+docs/evidence/
